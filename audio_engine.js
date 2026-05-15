@@ -1,6 +1,7 @@
 let audioCtx;
 let microphone;
-let gainNode;
+let preAmp; // NEW: Stage 1 Gain
+let gainNode; // Stage 2 Gain
 let filterNode;
 let speechClarifier;
 let compressor;
@@ -17,8 +18,7 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-// --- THE FIX: Visual Heartbeat to prove JS is running ---
-if (debugConsole) debugConsole.innerText = "JS ENGINE: READY (TOUCH POWER TO START)";
+if (debugConsole) debugConsole.innerText = "JS ENGINE: READY (DSP V4.0)";
 
 async function initAudio() {
     try {
@@ -26,30 +26,43 @@ async function initAudio() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         microphone = audioCtx.createMediaStreamSource(stream);
         
+        // 1. PRE-AMP (Boosts whispers 10x before processing)
+        preAmp = audioCtx.createGain();
+        preAmp.gain.value = 10.0; 
+
+        // 2. SPEECH CLARIFIER
         speechClarifier = audioCtx.createBiquadFilter();
         speechClarifier.type = 'peaking';
         speechClarifier.frequency.value = 3000; 
-        speechClarifier.gain.value = 15; 
+        speechClarifier.gain.value = 18; 
         
+        // 3. AI BANDPASS
         filterNode = audioCtx.createBiquadFilter();
         filterNode.type = 'bandpass';
         filterNode.frequency.value = 1200;
 
+        // 4. THE "SMOOTH" COMPRESSOR (Prevents cutting)
         compressor = audioCtx.createDynamicsCompressor();
-        compressor.threshold.setValueAtTime(-24, audioCtx.currentTime);
+        compressor.threshold.setValueAtTime(-40, audioCtx.currentTime); // Catch very faint sounds
+        compressor.knee.setValueAtTime(40, audioCtx.currentTime);
+        compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+        compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+        compressor.release.setValueAtTime(1.2, audioCtx.currentTime); // LONG RELEASE: No more word-cutting
 
         gainNode = audioCtx.createGain();
-        gainNode.gain.value = 3.0; 
+        gainNode.gain.value = 2.0; 
 
         feedbackSuppresor = audioCtx.createDelay(0.1);
         feedbackSuppresor.delayTime.value = 0.002;
 
         limiter = audioCtx.createDynamicsCompressor();
-        limiter.threshold.setValueAtTime(-1.0, audioCtx.currentTime);
+        limiter.threshold.setValueAtTime(-0.5, audioCtx.currentTime);
 
         analyser = audioCtx.createAnalyser();
         
-        microphone.connect(speechClarifier);
+        // DSP CHAIN: Mic -> PreAmp -> Clarifier -> AI Filter -> Compressor -> Gain -> Output
+        microphone.connect(preAmp);
+        preAmp.connect(speechClarifier);
         speechClarifier.connect(filterNode);
         filterNode.connect(compressor);
         compressor.connect(feedbackSuppresor);
@@ -58,7 +71,9 @@ async function initAudio() {
         limiter.connect(analyser);
         analyser.connect(audioCtx.destination);
         
+        initProfileHandlers();
         runAutoSense();
+        drawVisualizer();
         return true;
     } catch (err) {
         if (debugConsole) debugConsole.innerText = "ERROR: " + err.message;
@@ -66,43 +81,61 @@ async function initAudio() {
     }
 }
 
+function initProfileHandlers() {
+    document.querySelectorAll('.profile-btn').forEach(btn => {
+        btn.onclick = () => {
+            document.querySelector('.profile-btn.active').classList.remove('active');
+            btn.classList.add('active');
+            const profile = btn.dataset.profile;
+            if (profile === 'crowded') {
+                filterNode.type = 'bandpass';
+                filterNode.frequency.setTargetAtTime(1000, audioCtx.currentTime, 0.1);
+                speechClarifier.gain.setTargetAtTime(18, audioCtx.currentTime, 0.1);
+            } else if (profile === 'street') {
+                filterNode.type = 'highpass';
+                filterNode.frequency.setTargetAtTime(1800, audioCtx.currentTime, 0.1);
+                speechClarifier.gain.setTargetAtTime(10, audioCtx.currentTime, 0.1);
+            } else {
+                filterNode.type = 'allpass';
+                speechClarifier.gain.setTargetAtTime(5, audioCtx.currentTime, 0.1);
+            }
+        };
+    });
+}
+
 function runAutoSense() {
     if (!isEnabled) { requestAnimationFrame(runAutoSense); return; }
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
     let average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-    if (average < 20) gainNode.gain.setTargetAtTime(4.5, audioCtx.currentTime, 0.2); 
-    else if (average > 60) gainNode.gain.setTargetAtTime(1.2, audioCtx.currentTime, 0.2); 
+    
+    // SMART ADAPTATION
+    if (average < 15) {
+        preAmp.gain.setTargetAtTime(15.0, audioCtx.currentTime, 0.5); // HEAVILY BOOST WHISPERS
+    } else if (average > 50) {
+        preAmp.gain.setTargetAtTime(5.0, audioCtx.currentTime, 0.5); // NORMAL GAIN
+    }
     requestAnimationFrame(runAutoSense);
 }
 
-// THE FIX: Global wake-up listener
-document.addEventListener('click', () => {
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-}, { once: true });
-
 powerBtn.addEventListener('click', async () => {
-    if (debugConsole) debugConsole.innerText = "POWER CLICKED - WAKING UP...";
-    
     if (!audioCtx) {
+        statusText.innerText = "INITIALIZING DSP...";
         const success = await initAudio();
         if (!success) return;
         initTranscription();
     }
-    
     isEnabled = !isEnabled;
     if (isEnabled) {
         audioCtx.resume();
         if (recognition) try { recognition.start(); } catch(e) {}
         powerBtn.classList.add('on');
         statusText.innerText = "AUDIOSENSE ACTIVE";
-        if (debugConsole) debugConsole.innerText = "SYSTEM ONLINE";
     } else {
         audioCtx.suspend();
         if (recognition) recognition.stop();
         powerBtn.classList.remove('on');
         statusText.innerText = "AUDIOSENSE STANDBY";
-        if (debugConsole) debugConsole.innerText = "SYSTEM PAUSED";
     }
 });
 
@@ -119,9 +152,23 @@ function initTranscription() {
             if (event.results[i].isFinal) { finalTranscript += transcript + " "; shadowTranscript = ""; }
             else { interimTranscript = transcript; shadowTranscript = interimTranscript; }
         }
-        const displayBody = finalTranscript + (interimTranscript || shadowTranscript);
-        transcriptionBox.innerHTML = `<span>${displayBody}</span>`;
+        transcriptionBox.innerHTML = `<span>${finalTranscript + (interimTranscript || shadowTranscript)}</span>`;
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
     recognition.onend = () => { if (isEnabled) recognition.start(); };
+}
+
+function drawVisualizer() {
+    requestAnimationFrame(drawVisualizer);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+    const barWidth = (canvas.width / analyser.frequencyBinCount) * 2.5;
+    let x = 0;
+    for(let i = 0; i < analyser.frequencyBinCount; i++) {
+        const barHeight = dataArray[i] / 4;
+        canvasCtx.fillStyle = `rgba(0, 255, 102, ${dataArray[i] / 255})`;
+        canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+        x += barWidth + 1;
+    }
 }
