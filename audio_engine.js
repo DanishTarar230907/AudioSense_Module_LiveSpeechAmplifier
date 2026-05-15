@@ -4,8 +4,9 @@ let preAmp;
 let gainNode;
 let filterNode;
 let speechClarifier;
+let hissSuppressor; // NEW: Kills the "Rain" sound
 let compressor;
-let gate; // NEW: Noise Gate
+let gate;
 let limiter;
 let analyser;
 let isEnabled = false;
@@ -14,10 +15,16 @@ let finalTranscript = "";
 let shadowTranscript = "";
 let lastTranscriptTime = Date.now();
 
+// DOM Elements
 const powerBtn = document.getElementById('powerBtn');
 const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
+const canvas = document.getElementById('visualizer');
+let canvasCtx;
+
+if (canvas) canvasCtx = canvas.getContext('2d');
+if (debugConsole) debugConsole.innerText = "JS ENGINE: READY (V5.0 CRYSTAL)";
 
 async function initAudio() {
     try {
@@ -26,39 +33,42 @@ async function initAudio() {
         microphone = audioCtx.createMediaStreamSource(stream);
         
         preAmp = audioCtx.createGain();
-        preAmp.gain.value = 8.0; 
+        preAmp.gain.value = 5.0; 
+
+        // 1. HISS SUPPRESSOR (Cuts the "Rain/Water" frequencies)
+        hissSuppressor = audioCtx.createBiquadFilter();
+        hissSuppressor.type = 'lowpass';
+        hissSuppressor.frequency.value = 6000; // Block everything above 6kHz (hiss)
 
         speechClarifier = audioCtx.createBiquadFilter();
         speechClarifier.type = 'peaking';
         speechClarifier.frequency.value = 3000; 
-        speechClarifier.gain.value = 15; 
+        speechClarifier.gain.value = 12; 
         
         filterNode = audioCtx.createBiquadFilter();
         filterNode.type = 'bandpass';
         filterNode.frequency.value = 1200;
 
-        // --- THE FIX: Surgical Noise Gate (Kills breathing/hiss) ---
         gate = audioCtx.createDynamicsCompressor();
-        gate.threshold.setValueAtTime(-50, audioCtx.currentTime); // Silence everything below this
+        gate.threshold.setValueAtTime(-45, audioCtx.currentTime); 
         gate.ratio.setValueAtTime(20, audioCtx.currentTime);
-        gate.attack.setValueAtTime(0.01, audioCtx.currentTime);
-        gate.release.setValueAtTime(0.1, audioCtx.currentTime);
 
         compressor = audioCtx.createDynamicsCompressor();
         compressor.threshold.setValueAtTime(-30, audioCtx.currentTime);
         compressor.release.setValueAtTime(1.0, audioCtx.currentTime);
 
         gainNode = audioCtx.createGain();
-        gainNode.gain.value = 1.5; 
+        gainNode.gain.value = 1.2; 
 
         limiter = audioCtx.createDynamicsCompressor();
         limiter.threshold.setValueAtTime(-0.5, audioCtx.currentTime);
 
         analyser = audioCtx.createAnalyser();
         
-        // CHAIN: Mic -> PreAmp -> Gate -> Clarifier -> AI Filter -> Compressor -> Output
+        // CHAIN: Mic -> PreAmp -> HissSuppressor -> Gate -> Clarifier -> AI Filter -> Compressor -> Output
         microphone.connect(preAmp);
-        preAmp.connect(gate);
+        preAmp.connect(hissSuppressor);
+        hissSuppressor.connect(gate);
         gate.connect(speechClarifier);
         speechClarifier.connect(filterNode);
         filterNode.connect(compressor);
@@ -81,7 +91,6 @@ function initProfileHandlers() {
     document.querySelectorAll('.profile-btn').forEach(btn => {
         btn.onclick = (e) => {
             e.stopPropagation();
-            console.log("Profile Changed:", btn.dataset.profile);
             document.querySelector('.profile-btn.active').classList.remove('active');
             btn.classList.add('active');
             const profile = btn.dataset.profile;
@@ -104,20 +113,19 @@ function runAutoSense() {
     analyser.getByteFrequencyData(dataArray);
     let average = dataArray.reduce((a, b) => a + b) / dataArray.length;
     
-    // GATING LOGIC: If silent, kill the pre-amp gain to stop "breathing" noise
-    if (average < 10) {
-        preAmp.gain.setTargetAtTime(0.1, audioCtx.currentTime, 0.2); 
+    // SMART ADAPTATION (With Hiss-Floor)
+    if (average < 8) {
+        preAmp.gain.setTargetAtTime(0.1, audioCtx.currentTime, 0.5); // Silent Floor
+    } else if (average < 25) {
+        preAmp.gain.setTargetAtTime(10.0, audioCtx.currentTime, 0.5); // Whisper Mode
     } else {
-        preAmp.gain.setTargetAtTime(8.0, audioCtx.currentTime, 0.2);
+        preAmp.gain.setTargetAtTime(3.0, audioCtx.currentTime, 0.5); // Normal Mode
     }
 
-    // --- THE FIX: Transcription Heartbeat ---
-    if (Date.now() - lastTranscriptTime > 5000 && average > 20) {
-        console.log("Transcription stalled. Restarting...");
+    if (Date.now() - lastTranscriptTime > 8000 && average > 20) {
         if (recognition) { try { recognition.stop(); } catch(e) {} }
         lastTranscriptTime = Date.now();
     }
-
     requestAnimationFrame(runAutoSense);
 }
 
@@ -148,7 +156,7 @@ function initTranscription() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onresult = (event) => {
-        lastTranscriptTime = Date.now(); // Reset heartbeat
+        lastTranscriptTime = Date.now();
         let interimTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
             const transcript = event.results[i][0].transcript;
@@ -163,6 +171,7 @@ function initTranscription() {
 
 function drawVisualizer() {
     requestAnimationFrame(drawVisualizer);
+    if (!canvasCtx) return;
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
     canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
@@ -175,4 +184,3 @@ function drawVisualizer() {
         x += barWidth + 1;
     }
 }
-const canvasCtx = document.getElementById('visualizer').getContext('2d');
