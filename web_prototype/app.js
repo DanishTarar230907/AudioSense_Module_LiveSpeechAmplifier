@@ -10,12 +10,11 @@ let feedbackSuppresor;
 let isEnabled = false;
 let recognition;
 let finalTranscript = "";
+let shadowTranscript = ""; // Buffer for unfinalized words
 
 const powerBtn = document.getElementById('powerBtn');
 const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
-const volumeSlider = document.getElementById('volumeSlider');
-const intensitySlider = document.getElementById('intensitySlider');
 const canvas = document.getElementById('visualizer');
 const canvasCtx = canvas.getContext('2d');
 
@@ -26,40 +25,33 @@ async function initAudio() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         microphone = audioCtx.createMediaStreamSource(stream);
         
-        // 1. SPEECH CLARIFIER (Equalizer for Intelligibility)
         speechClarifier = audioCtx.createBiquadFilter();
         speechClarifier.type = 'peaking';
         speechClarifier.frequency.value = 3000; 
-        speechClarifier.gain.value = 15; // 15dB boost for speech crispness
+        speechClarifier.gain.value = 15; 
         
-        // 2. BACKGROUND SUPPRESSOR
         filterNode = audioCtx.createBiquadFilter();
         filterNode.type = 'bandpass';
         filterNode.frequency.value = 1200;
         filterNode.Q.value = 1.0;
 
-        // 3. SOFT-KNEE COMPRESSOR (Smooths out loudness jumps)
         compressor = audioCtx.createDynamicsCompressor();
         compressor.threshold.setValueAtTime(-24, audioCtx.currentTime);
         compressor.knee.setValueAtTime(30, audioCtx.currentTime);
         compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
 
-        // 4. MASTER GAIN (Extreme Amplification)
         gainNode = audioCtx.createGain();
-        gainNode.gain.value = 3.0; // Start at 300% volume
+        gainNode.gain.value = 3.0; 
 
-        // 5. ANTI-HOWLING / FEEDBACK SUPPRESSOR
         feedbackSuppresor = audioCtx.createDelay(0.1);
         feedbackSuppresor.delayTime.value = 0.002;
 
-        // 6. LIMITER (Prevents distortion and "Beeping")
         limiter = audioCtx.createDynamicsCompressor();
         limiter.threshold.setValueAtTime(-1.0, audioCtx.currentTime);
         limiter.ratio.setValueAtTime(20, audioCtx.currentTime);
 
         analyser = audioCtx.createAnalyser();
         
-        // --- ROUTING: The DSP Pipeline ---
         microphone.connect(speechClarifier);
         speechClarifier.connect(filterNode);
         filterNode.connect(compressor);
@@ -69,7 +61,6 @@ async function initAudio() {
         limiter.connect(analyser);
         analyser.connect(audioCtx.destination);
         
-        // LFO for Feedback Suppression
         const lfo = audioCtx.createOscillator();
         const lfoGain = audioCtx.createGain();
         lfo.frequency.value = 0.5;
@@ -92,23 +83,17 @@ function runAutoSense() {
         requestAnimationFrame(runAutoSense);
         return;
     }
-
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
     let average = dataArray.reduce((a, b) => a + b) / dataArray.length;
     
-    // SMART ADAPTATION
-    // If quiet, boost gain and lower suppression
     if (average < 20) {
-        gainNode.gain.setTargetAtTime(4.0, audioCtx.currentTime, 0.2); // 400% Gain
+        gainNode.gain.setTargetAtTime(4.5, audioCtx.currentTime, 0.2); 
         filterNode.Q.setTargetAtTime(0.5, audioCtx.currentTime, 0.2);
-    } 
-    // If noisy, suppress more and protect hearing
-    else if (average > 60) {
-        gainNode.gain.setTargetAtTime(1.5, audioCtx.currentTime, 0.2); 
+    } else if (average > 60) {
+        gainNode.gain.setTargetAtTime(1.2, audioCtx.currentTime, 0.2); 
         filterNode.Q.setTargetAtTime(4.0, audioCtx.currentTime, 0.2);
     }
-
     requestAnimationFrame(runAutoSense);
 }
 
@@ -148,15 +133,33 @@ function initTranscription() {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
                 finalTranscript += transcript + " ";
+                shadowTranscript = ""; 
             } else {
-                interimTranscript += transcript;
+                interimTranscript = transcript;
+                shadowTranscript = interimTranscript;
             }
         }
-        transcriptionBox.innerHTML = `<span style="color:#fff">${finalTranscript}</span><span style="color:#00ff66; font-style:italic;">${interimTranscript}</span>`;
+        // THE FIX: Use Shadow Buffering to prevent word-cut
+        const displayBody = finalTranscript + (interimTranscript || shadowTranscript);
+        transcriptionBox.innerHTML = `<span style="color:#fff">${displayBody}</span>`;
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
 
-    recognition.onend = () => { if (isEnabled) recognition.start(); };
+    recognition.onend = () => { 
+        if (isEnabled) {
+            if (shadowTranscript) {
+                finalTranscript += shadowTranscript + " ";
+                shadowTranscript = "";
+            }
+            recognition.start(); 
+        }
+    };
+    
+    recognition.onerror = (e) => {
+        if (e.error !== 'no-speech' && isEnabled) {
+            setTimeout(() => recognition.start(), 100);
+        }
+    };
 }
 
 function drawVisualizer() {
