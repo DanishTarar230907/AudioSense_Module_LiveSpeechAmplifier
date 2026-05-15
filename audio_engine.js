@@ -1,3 +1,4 @@
+// ABSOLUTE STABILITY CORE (V9.0)
 window.audioCtx = null;
 window.analyser = null;
 window.isEnabled = false;
@@ -8,71 +9,54 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-if (debugConsole) debugConsole.innerText = "DISTANT-PRIORITY (V8.0)";
+if (debugConsole) debugConsole.innerText = "ABSOLUTE SILENCE (V9.0)";
 
 async function initAudio() {
     try {
-        window.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: 'interactive'
-        });
-
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: true, noiseSuppression: true } 
-        });
-        
+        window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const microphone = window.audioCtx.createMediaStreamSource(stream);
         
-        // 1. SELF-VOICE LIMITER (Prevents your own voice from being too loud)
-        const selfVoiceLimiter = window.audioCtx.createDynamicsCompressor();
-        selfVoiceLimiter.threshold.setValueAtTime(-20, window.audioCtx.currentTime);
-        selfVoiceLimiter.knee.setValueAtTime(0, window.audioCtx.currentTime);
-        selfVoiceLimiter.ratio.setValueAtTime(20, window.audioCtx.currentTime); // Hard limit for close-talk
-        selfVoiceLimiter.attack.setValueAtTime(0.001, window.audioCtx.currentTime);
-        selfVoiceLimiter.release.setValueAtTime(0.05, window.audioCtx.currentTime);
+        window.preAmp = window.audioCtx.createGain();
+        window.preAmp.gain.value = 0; // Start Muted
 
-        // 2. DISTANT-VOICE EXPANDER (Pulling distant speech forward)
-        const distantExpander = window.audioCtx.createDynamicsCompressor();
-        distantExpander.threshold.setValueAtTime(-45, window.audioCtx.currentTime);
-        distantExpander.knee.setValueAtTime(40, window.audioCtx.currentTime);
-        distantExpander.ratio.setValueAtTime(1.5, window.audioCtx.currentTime); // Soft boost for faint sounds
+        // THE HISS KILLER
+        const hissFilter = window.audioCtx.createBiquadFilter();
+        hissFilter.type = 'lowpass';
+        hissFilter.frequency.value = 4500; // Even tighter focus
 
-        const clarifier = window.audioCtx.createBiquadFilter();
-        clarifier.type = 'peaking';
-        clarifier.frequency.value = 3500; // Crispness focus
-        clarifier.gain.value = 15;
-
-        const gainNode = window.audioCtx.createGain();
-        gainNode.gain.value = 1.5;
+        const compressor = window.audioCtx.createDynamicsCompressor();
+        compressor.threshold.setValueAtTime(-30, window.audioCtx.currentTime);
 
         window.analyser = window.audioCtx.createAnalyser();
         
-        // CHAIN: Mic -> Self-Voice Limiter -> Distant Expander -> Clarifier -> Output
-        microphone.connect(selfVoiceLimiter);
-        selfVoiceLimiter.connect(distantExpander);
-        distantExpander.connect(clarifier);
-        clarifier.connect(gainNode);
-        gainNode.connect(window.analyser);
+        microphone.connect(window.preAmp);
+        window.preAmp.connect(hissFilter);
+        hissFilter.connect(compressor);
+        compressor.connect(window.analyser);
         window.analyser.connect(window.audioCtx.destination);
         
         runAutoSense();
         drawVisualizer();
         return true;
     } catch (err) {
-        if (debugConsole) debugConsole.innerText = "ERROR: " + err.message;
+        if (debugConsole) debugConsole.innerText = "DSP ERROR: " + err.message;
         return false;
     }
 }
 
 function runAutoSense() {
-    if (!window.isEnabled) { requestAnimationFrame(runAutoSense); return; }
-    const dataArray = new Uint8Array(window.analyser.frequencyBinCount);
-    window.analyser.getByteFrequencyData(dataArray);
-    let avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    if (!window.isEnabled || !window.analyser) { requestAnimationFrame(runAutoSense); return; }
+    const data = new Uint8Array(window.analyser.frequencyBinCount);
+    window.analyser.getByteFrequencyData(data);
+    let avg = data.reduce((a, b) => a + b) / data.length;
     
-    // If it's very loud (User's own voice), keep the gain low
-    if (avg > 60) {
-        window.audioCtx.destination.channelCount = 2; // Stereo focus
-    } 
+    // THE FIX: ZERO-TOLERANCE GATE
+    if (avg < 12) {
+        window.preAmp.gain.setTargetAtTime(0.001, window.audioCtx.currentTime, 0.1); // TOTAL SILENCE
+    } else {
+        window.preAmp.gain.setTargetAtTime(5.0, window.audioCtx.currentTime, 0.2); // HIGH GAIN SPEECH
+    }
     requestAnimationFrame(runAutoSense);
 }
 
@@ -86,7 +70,7 @@ powerBtn.addEventListener('click', async () => {
     if (window.isEnabled) {
         window.audioCtx.resume();
         powerBtn.classList.add('on');
-        statusText.innerText = "DISTANT FOCUS ON";
+        statusText.innerText = "AUDIOSENSE ACTIVE";
     } else {
         window.audioCtx.suspend();
         powerBtn.classList.remove('on');
@@ -115,16 +99,16 @@ function initTranscription() {
 function drawVisualizer() {
     requestAnimationFrame(drawVisualizer);
     if (!window.analyser) return;
-    const canvas = document.getElementById('visualizer');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const canvasElement = document.getElementById('visualizer'); // Fetch directly to avoid errors
+    if (!canvasElement) return;
+    const ctx = canvasElement.getContext('2d');
     const data = new Uint8Array(window.analyser.frequencyBinCount);
     window.analyser.getByteFrequencyData(data);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const barWidth = (canvas.width / 128);
-    for(let i = 0; i < 128; i++) {
+    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    const bw = canvasElement.width / 64;
+    for(let i = 0; i < 64; i++) {
         const h = data[i] / 4;
         ctx.fillStyle = "#00ff66";
-        ctx.fillRect(i * barWidth, canvas.height - h, barWidth - 1, h);
+        ctx.fillRect(i * bw, canvasElement.height - h, bw - 2, h);
     }
 }
