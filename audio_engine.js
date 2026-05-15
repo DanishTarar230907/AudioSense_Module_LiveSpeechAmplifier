@@ -1,46 +1,42 @@
-// GLOBAL WINDOW SHIELD - Prevents "variable not found" errors
 window.audioCtx = null;
 window.analyser = null;
 window.isEnabled = false;
 window.finalTranscript = "";
-window.shadowTranscript = "";
 
 const powerBtn = document.getElementById('powerBtn');
 const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
-const canvas = document.getElementById('visualizer');
 
-if (debugConsole) debugConsole.innerText = "SAFE-MODE READY (V6.0)";
+if (debugConsole) debugConsole.innerText = "BT OPTIMIZED (V7.0)";
 
 async function initAudio() {
     try {
-        window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const microphone = window.audioCtx.createMediaStreamSource(stream);
-        
-        const preAmp = window.audioCtx.createGain();
-        preAmp.gain.value = 3.0; // Lowered for safety
+        // --- THE FIX: Request Ultra-Low Latency ---
+        window.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: 'interactive',
+            sampleRate: 44100
+        });
 
-        // ANTI-RAIN FILTER (Cuts all high-frequency hiss)
+        // --- THE FIX: Enable Echo Cancellation for Bluetooth ---
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            } 
+        });
+        
+        const microphone = window.audioCtx.createMediaStreamSource(stream);
+        const preAmp = window.audioCtx.createGain();
+        preAmp.gain.value = 4.0;
+
         const hissKiller = window.audioCtx.createBiquadFilter();
         hissKiller.type = 'lowpass';
         hissKiller.frequency.value = 5000; 
 
-        // ANTI-FEEDBACK NOTCH
-        const notch = window.audioCtx.createBiquadFilter();
-        notch.type = 'notch';
-        notch.frequency.value = 1000;
-        notch.Q.value = 10;
-
-        const clarifier = window.audioCtx.createBiquadFilter();
-        clarifier.type = 'peaking';
-        clarifier.frequency.value = 3000;
-        clarifier.gain.value = 10;
-
         const gate = window.audioCtx.createDynamicsCompressor();
-        gate.threshold.setValueAtTime(-40, window.audioCtx.currentTime);
-        gate.ratio.setValueAtTime(20, window.audioCtx.currentTime);
+        gate.threshold.setValueAtTime(-45, window.audioCtx.currentTime);
 
         const gainNode = window.audioCtx.createGain();
         gainNode.gain.value = 1.0;
@@ -49,17 +45,15 @@ async function initAudio() {
         
         microphone.connect(preAmp);
         preAmp.connect(hissKiller);
-        hissKiller.connect(notch);
-        notch.connect(gate);
-        gate.connect(clarifier);
-        clarifier.connect(gainNode);
+        hissKiller.connect(gate);
+        gate.connect(gainNode);
         gainNode.connect(window.analyser);
         window.analyser.connect(window.audioCtx.destination);
         
         drawVisualizer();
         return true;
     } catch (err) {
-        if (debugConsole) debugConsole.innerText = "MIC ERROR: " + err.message;
+        if (debugConsole) debugConsole.innerText = "BT ERROR: " + err.message;
         return false;
     }
 }
@@ -75,14 +69,12 @@ powerBtn.addEventListener('click', async () => {
         window.audioCtx.resume();
         if (window.recognition) try { window.recognition.start(); } catch(e) {}
         powerBtn.classList.add('on');
-        statusText.innerText = "ACTIVE (USE HEADPHONES)";
-        statusText.style.color = "#00ff66";
+        statusText.innerText = "BT ACTIVE";
     } else {
         window.audioCtx.suspend();
         if (window.recognition) window.recognition.stop();
         powerBtn.classList.remove('on');
         statusText.innerText = "STANDBY";
-        statusText.style.color = "#888";
     }
 });
 
@@ -106,7 +98,9 @@ function initTranscription() {
 
 function drawVisualizer() {
     requestAnimationFrame(drawVisualizer);
-    if (!window.analyser || !canvas) return;
+    if (!window.analyser) return;
+    const canvas = document.getElementById('visualizer');
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const data = new Uint8Array(window.analyser.frequencyBinCount);
     window.analyser.getByteFrequencyData(data);
