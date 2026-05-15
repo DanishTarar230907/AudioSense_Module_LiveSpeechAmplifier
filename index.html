@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioSense Ai | Speech Amplifier</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="dashboard">
+        <header>
+            <div class="status-dot"></div>
+            <h1>AUDIOSENSE <span class="v2">AI</span></h1>
+            <p class="subtitle">INTELLIGENT SPEECH ISOLATION</p>
+        </header>
+
+        <div class="main-toggle">
+            <button id="powerBtn" class="power-button">
+                <div class="power-icon"></div>
+            </button>
+            <p id="statusText">SYSTEM STANDBY</p>
+        </div>
+
+        <div class="controls" style="display:none;">
+            <div class="control-card">
+                <label>MASTER VOLUME</label>
+                <input type="range" id="volumeSlider" min="0" max="5" step="0.1" value="2">
+                <div class="value-display" id="volumeVal">100%</div>
+            </div>
+
+            <div class="control-card">
+                <label>AI INTENSITY</label>
+                <input type="range" id="intensitySlider" min="0" max="1" step="0.05" value="0.5">
+                <div class="value-display" id="intensityVal">50%</div>
+            </div>
+        </div>
+
+        <div class="profiles">
+            <h3>ENVIRONMENT PROFILES</h3>
+            <div class="profile-grid">
+                <button class="profile-btn active" data-profile="crowded">CROWDED</button>
+                <button class="profile-btn" data-profile="street">STREET</button>
+                <button class="profile-btn" data-profile="quiet">QUIET</button>
+            </div>
+        </div>
+
+        <div class="transcription-container">
+            <label>LIVE TRANSCRIPTION</label>
+            <div id="transcriptionBox" class="transcription-box">Listening...</div>
+        </div>
+
+        <div class="visualizer-container">
+            <canvas id="visualizer"></canvas>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
