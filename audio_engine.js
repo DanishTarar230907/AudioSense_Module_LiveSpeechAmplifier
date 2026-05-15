@@ -1,4 +1,3 @@
-// ABSOLUTE STABILITY CORE (V9.0)
 window.audioCtx = null;
 window.analyser = null;
 window.isEnabled = false;
@@ -9,7 +8,7 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-if (debugConsole) debugConsole.innerText = "ABSOLUTE SILENCE (V9.0)";
+if (debugConsole) debugConsole.innerText = "AUDIOSENSE RESTORED (V9.5)";
 
 async function initAudio() {
     try {
@@ -18,12 +17,11 @@ async function initAudio() {
         const microphone = window.audioCtx.createMediaStreamSource(stream);
         
         window.preAmp = window.audioCtx.createGain();
-        window.preAmp.gain.value = 0; // Start Muted
+        window.preAmp.gain.value = 0; 
 
-        // THE HISS KILLER
-        const hissFilter = window.audioCtx.createBiquadFilter();
-        hissFilter.type = 'lowpass';
-        hissFilter.frequency.value = 4500; // Even tighter focus
+        window.filterNode = window.audioCtx.createBiquadFilter();
+        window.filterNode.type = 'bandpass';
+        window.filterNode.frequency.value = 1200;
 
         const compressor = window.audioCtx.createDynamicsCompressor();
         compressor.threshold.setValueAtTime(-30, window.audioCtx.currentTime);
@@ -31,11 +29,12 @@ async function initAudio() {
         window.analyser = window.audioCtx.createAnalyser();
         
         microphone.connect(window.preAmp);
-        window.preAmp.connect(hissFilter);
-        hissFilter.connect(compressor);
+        window.preAmp.connect(window.filterNode);
+        window.filterNode.connect(compressor);
         compressor.connect(window.analyser);
         window.analyser.connect(window.audioCtx.destination);
         
+        initProfileHandlers();
         runAutoSense();
         drawVisualizer();
         return true;
@@ -45,17 +44,37 @@ async function initAudio() {
     }
 }
 
+function initProfileHandlers() {
+    document.querySelectorAll('.profile-btn').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            document.querySelector('.profile-btn.active').classList.remove('active');
+            btn.classList.add('active');
+            const profile = btn.dataset.profile;
+            if (profile === 'crowded') {
+                window.filterNode.type = 'bandpass';
+                window.filterNode.frequency.setTargetAtTime(1000, window.audioCtx.currentTime, 0.1);
+            } else if (profile === 'street') {
+                window.filterNode.type = 'highpass';
+                window.filterNode.frequency.setTargetAtTime(2000, window.audioCtx.currentTime, 0.1);
+            } else {
+                window.filterNode.type = 'allpass';
+            }
+        };
+    });
+}
+
 function runAutoSense() {
     if (!window.isEnabled || !window.analyser) { requestAnimationFrame(runAutoSense); return; }
     const data = new Uint8Array(window.analyser.frequencyBinCount);
     window.analyser.getByteFrequencyData(data);
     let avg = data.reduce((a, b) => a + b) / data.length;
     
-    // THE FIX: ZERO-TOLERANCE GATE
-    if (avg < 12) {
-        window.preAmp.gain.setTargetAtTime(0.001, window.audioCtx.currentTime, 0.1); // TOTAL SILENCE
+    // NEW: Improved Sensitivity (Lower threshold = easier to hear)
+    if (avg < 5) {
+        window.preAmp.gain.setTargetAtTime(0.001, window.audioCtx.currentTime, 0.1); 
     } else {
-        window.preAmp.gain.setTargetAtTime(5.0, window.audioCtx.currentTime, 0.2); // HIGH GAIN SPEECH
+        window.preAmp.gain.setTargetAtTime(6.0, window.audioCtx.currentTime, 0.2); 
     }
     requestAnimationFrame(runAutoSense);
 }
@@ -69,10 +88,12 @@ powerBtn.addEventListener('click', async () => {
     window.isEnabled = !window.isEnabled;
     if (window.isEnabled) {
         window.audioCtx.resume();
+        if (window.recognition) try { window.recognition.start(); } catch(e) {}
         powerBtn.classList.add('on');
         statusText.innerText = "AUDIOSENSE ACTIVE";
     } else {
         window.audioCtx.suspend();
+        if (window.recognition) window.recognition.stop();
         powerBtn.classList.remove('on');
         statusText.innerText = "STANDBY";
     }
@@ -99,7 +120,7 @@ function initTranscription() {
 function drawVisualizer() {
     requestAnimationFrame(drawVisualizer);
     if (!window.analyser) return;
-    const canvasElement = document.getElementById('visualizer'); // Fetch directly to avoid errors
+    const canvasElement = document.getElementById('visualizer');
     if (!canvasElement) return;
     const ctx = canvasElement.getContext('2d');
     const data = new Uint8Array(window.analyser.frequencyBinCount);
