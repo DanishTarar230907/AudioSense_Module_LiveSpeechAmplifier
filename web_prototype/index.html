@@ -22,6 +22,15 @@
             <p id="statusText">SYSTEM STANDBY</p>
         </div>
 
+        <div class="profiles">
+            <h3>ENVIRONMENT PROFILES</h3>
+            <div class="profile-grid">
+                <button class="profile-btn active" data-profile="crowded">CROWDED</button>
+                <button class="profile-btn" data-profile="street">STREET</button>
+                <button class="profile-btn" data-profile="quiet">QUIET</button>
+            </div>
+        </div>
+
         <div class="controls" style="display:none;">
             <div class="control-card">
                 <label>MASTER VOLUME</label>
@@ -36,24 +45,18 @@
             </div>
         </div>
 
-        <div class="profiles">
-            <h3>ENVIRONMENT PROFILES</h3>
-            <div class="profile-grid">
-                <button class="profile-btn active" data-profile="crowded">CROWDED</button>
-                <button class="profile-btn" data-profile="street">STREET</button>
-                <button class="profile-btn" data-profile="quiet">QUIET</button>
-            </div>
-        </div>
 
         <div class="transcription-container">
             <label>LIVE TRANSCRIPTION</label>
             <div id="transcriptionBox" class="transcription-box">Listening...</div>
         </div>
 
+        <div id="debugConsole" style="text-align:center; color:#333; font-size:9px; margin-top:10px; letter-spacing:1px;">JS ENGINE: STARTING...</div>
+
         <div class="visualizer-container">
             <canvas id="visualizer"></canvas>
         </div>
     </div>
-    <script src="app.js"></script>
+    <script src="audio_engine.js?v=3.0"></script>
 </body>
 </html>
