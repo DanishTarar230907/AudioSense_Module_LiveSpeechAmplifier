@@ -8,54 +8,72 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-if (debugConsole) debugConsole.innerText = "BT OPTIMIZED (V7.0)";
+if (debugConsole) debugConsole.innerText = "DISTANT-PRIORITY (V8.0)";
 
 async function initAudio() {
     try {
-        // --- THE FIX: Request Ultra-Low Latency ---
         window.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: 'interactive',
-            sampleRate: 44100
+            latencyHint: 'interactive'
         });
 
-        // --- THE FIX: Enable Echo Cancellation for Bluetooth ---
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            } 
+            audio: { echoCancellation: true, noiseSuppression: true } 
         });
         
         const microphone = window.audioCtx.createMediaStreamSource(stream);
-        const preAmp = window.audioCtx.createGain();
-        preAmp.gain.value = 4.0;
+        
+        // 1. SELF-VOICE LIMITER (Prevents your own voice from being too loud)
+        const selfVoiceLimiter = window.audioCtx.createDynamicsCompressor();
+        selfVoiceLimiter.threshold.setValueAtTime(-20, window.audioCtx.currentTime);
+        selfVoiceLimiter.knee.setValueAtTime(0, window.audioCtx.currentTime);
+        selfVoiceLimiter.ratio.setValueAtTime(20, window.audioCtx.currentTime); // Hard limit for close-talk
+        selfVoiceLimiter.attack.setValueAtTime(0.001, window.audioCtx.currentTime);
+        selfVoiceLimiter.release.setValueAtTime(0.05, window.audioCtx.currentTime);
 
-        const hissKiller = window.audioCtx.createBiquadFilter();
-        hissKiller.type = 'lowpass';
-        hissKiller.frequency.value = 5000; 
+        // 2. DISTANT-VOICE EXPANDER (Pulling distant speech forward)
+        const distantExpander = window.audioCtx.createDynamicsCompressor();
+        distantExpander.threshold.setValueAtTime(-45, window.audioCtx.currentTime);
+        distantExpander.knee.setValueAtTime(40, window.audioCtx.currentTime);
+        distantExpander.ratio.setValueAtTime(1.5, window.audioCtx.currentTime); // Soft boost for faint sounds
 
-        const gate = window.audioCtx.createDynamicsCompressor();
-        gate.threshold.setValueAtTime(-45, window.audioCtx.currentTime);
+        const clarifier = window.audioCtx.createBiquadFilter();
+        clarifier.type = 'peaking';
+        clarifier.frequency.value = 3500; // Crispness focus
+        clarifier.gain.value = 15;
 
         const gainNode = window.audioCtx.createGain();
-        gainNode.gain.value = 1.0;
+        gainNode.gain.value = 1.5;
 
         window.analyser = window.audioCtx.createAnalyser();
         
-        microphone.connect(preAmp);
-        preAmp.connect(hissKiller);
-        hissKiller.connect(gate);
-        gate.connect(gainNode);
+        // CHAIN: Mic -> Self-Voice Limiter -> Distant Expander -> Clarifier -> Output
+        microphone.connect(selfVoiceLimiter);
+        selfVoiceLimiter.connect(distantExpander);
+        distantExpander.connect(clarifier);
+        clarifier.connect(gainNode);
         gainNode.connect(window.analyser);
         window.analyser.connect(window.audioCtx.destination);
         
+        runAutoSense();
         drawVisualizer();
         return true;
     } catch (err) {
-        if (debugConsole) debugConsole.innerText = "BT ERROR: " + err.message;
+        if (debugConsole) debugConsole.innerText = "ERROR: " + err.message;
         return false;
     }
+}
+
+function runAutoSense() {
+    if (!window.isEnabled) { requestAnimationFrame(runAutoSense); return; }
+    const dataArray = new Uint8Array(window.analyser.frequencyBinCount);
+    window.analyser.getByteFrequencyData(dataArray);
+    let avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+    
+    // If it's very loud (User's own voice), keep the gain low
+    if (avg > 60) {
+        window.audioCtx.destination.channelCount = 2; // Stereo focus
+    } 
+    requestAnimationFrame(runAutoSense);
 }
 
 powerBtn.addEventListener('click', async () => {
@@ -67,12 +85,10 @@ powerBtn.addEventListener('click', async () => {
     window.isEnabled = !window.isEnabled;
     if (window.isEnabled) {
         window.audioCtx.resume();
-        if (window.recognition) try { window.recognition.start(); } catch(e) {}
         powerBtn.classList.add('on');
-        statusText.innerText = "BT ACTIVE";
+        statusText.innerText = "DISTANT FOCUS ON";
     } else {
         window.audioCtx.suspend();
-        if (window.recognition) window.recognition.stop();
         powerBtn.classList.remove('on');
         statusText.innerText = "STANDBY";
     }
