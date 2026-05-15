@@ -10,7 +10,7 @@ let feedbackSuppresor;
 let isEnabled = false;
 let recognition;
 let finalTranscript = "";
-let shadowTranscript = ""; // Buffer for unfinalized words
+let shadowTranscript = "";
 
 const powerBtn = document.getElementById('powerBtn');
 const statusText = document.getElementById('statusText');
@@ -19,9 +19,8 @@ const canvas = document.getElementById('visualizer');
 const canvasCtx = canvas.getContext('2d');
 
 async function initAudio() {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
     try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         microphone = audioCtx.createMediaStreamSource(stream);
         
@@ -73,7 +72,9 @@ async function initAudio() {
         drawVisualizer();
         return true;
     } catch (err) {
-        statusText.innerText = "MIC ACCESS DENIED";
+        console.error(err);
+        statusText.innerText = "ERROR: " + err.message;
+        statusText.style.color = "red";
         return false;
     }
 }
@@ -89,16 +90,16 @@ function runAutoSense() {
     
     if (average < 20) {
         gainNode.gain.setTargetAtTime(4.5, audioCtx.currentTime, 0.2); 
-        filterNode.Q.setTargetAtTime(0.5, audioCtx.currentTime, 0.2);
     } else if (average > 60) {
         gainNode.gain.setTargetAtTime(1.2, audioCtx.currentTime, 0.2); 
-        filterNode.Q.setTargetAtTime(4.0, audioCtx.currentTime, 0.2);
     }
     requestAnimationFrame(runAutoSense);
 }
 
-powerBtn.onclick = async () => {
+// THE FIX: Robust Event Listener for Mobile
+powerBtn.addEventListener('click', async () => {
     if (!audioCtx) {
+        statusText.innerText = "INITIALIZING...";
         const success = await initAudio();
         if (!success) return;
         initTranscription();
@@ -107,16 +108,18 @@ powerBtn.onclick = async () => {
     isEnabled = !isEnabled;
     if (isEnabled) {
         audioCtx.resume();
-        if (recognition) recognition.start();
+        if (recognition) try { recognition.start(); } catch(e) {}
         powerBtn.classList.add('on');
         statusText.innerText = "AUDIOSENSE ACTIVE";
+        statusText.style.color = "#00ff66";
     } else {
         audioCtx.suspend();
         if (recognition) recognition.stop();
         powerBtn.classList.remove('on');
         statusText.innerText = "AUDIOSENSE STANDBY";
+        statusText.style.color = "#888";
     }
-};
+});
 
 function initTranscription() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -139,27 +142,12 @@ function initTranscription() {
                 shadowTranscript = interimTranscript;
             }
         }
-        // THE FIX: Use Shadow Buffering to prevent word-cut
         const displayBody = finalTranscript + (interimTranscript || shadowTranscript);
-        transcriptionBox.innerHTML = `<span style="color:#fff">${displayBody}</span>`;
+        transcriptionBox.innerHTML = `<span>${displayBody}</span>`;
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
 
-    recognition.onend = () => { 
-        if (isEnabled) {
-            if (shadowTranscript) {
-                finalTranscript += shadowTranscript + " ";
-                shadowTranscript = "";
-            }
-            recognition.start(); 
-        }
-    };
-    
-    recognition.onerror = (e) => {
-        if (e.error !== 'no-speech' && isEnabled) {
-            setTimeout(() => recognition.start(), 100);
-        }
-    };
+    recognition.onend = () => { if (isEnabled) recognition.start(); };
 }
 
 function drawVisualizer() {
