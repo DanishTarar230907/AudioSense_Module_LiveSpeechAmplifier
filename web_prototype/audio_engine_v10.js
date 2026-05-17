@@ -1,4 +1,4 @@
-// AUDIOSENSE UNIVERSAL ENGINE (V10.0)
+// AUDIOSENSE UNIVERSAL ENGINE (V10.1)
 window.audioCtx = null;
 window.analyser = null;
 window.isEnabled = false;
@@ -9,35 +9,62 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-if (debugConsole) debugConsole.innerText = "UNIVERSAL ENGINE: READY (V10.0)";
+if (debugConsole) debugConsole.innerText = "UNIVERSAL ENGINE: READY (V10.1)";
 
 async function initAudio() {
     try {
         window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Use browser's native echo cancellation and noise suppression
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: false
+            } 
+        });
+        
         const microphone = window.audioCtx.createMediaStreamSource(stream);
         
-        window.gainNode = window.audioCtx.createGain();
-        window.gainNode.gain.value = 5.0; // Powerful Default Amplification
-
+        // Highpass to remove rumble/handling noise
         window.filterNode = window.audioCtx.createBiquadFilter();
-        window.filterNode.type = 'bandpass';
-        window.filterNode.frequency.value = 1200;
+        window.filterNode.type = 'highpass';
+        window.filterNode.frequency.value = 150;
 
+        // Presence boost (clarifier) - gentle boost for speech intelligibility
         const clarifier = window.audioCtx.createBiquadFilter();
         clarifier.type = 'peaking';
         clarifier.frequency.value = 3000;
-        clarifier.gain.value = 15;
+        clarifier.gain.value = 5.0; // Reduced from 15 (which caused creepy ringing)
 
+        // Compressor acting as Automatic Gain Control (AGC)
+        const agc = window.audioCtx.createDynamicsCompressor();
+        agc.threshold.setValueAtTime(-40, window.audioCtx.currentTime); 
+        agc.knee.setValueAtTime(30, window.audioCtx.currentTime); 
+        agc.ratio.setValueAtTime(4, window.audioCtx.currentTime); 
+        agc.attack.setValueAtTime(0.01, window.audioCtx.currentTime);
+        agc.release.setValueAtTime(0.1, window.audioCtx.currentTime);
+
+        // Make-up gain
+        window.gainNode = window.audioCtx.createGain();
+        window.gainNode.gain.value = 2.0; // Reasonable amplification
+
+        // Limiter for safety (prevents clipping/sudden loud noises)
         const limiter = window.audioCtx.createDynamicsCompressor();
-        limiter.threshold.setValueAtTime(-1.0, window.audioCtx.currentTime);
+        limiter.threshold.setValueAtTime(-3.0, window.audioCtx.currentTime);
+        limiter.knee.setValueAtTime(0, window.audioCtx.currentTime);
+        limiter.ratio.setValueAtTime(20, window.audioCtx.currentTime); // Brickwall
+        limiter.attack.setValueAtTime(0.001, window.audioCtx.currentTime);
+        limiter.release.setValueAtTime(0.1, window.audioCtx.currentTime);
 
         window.analyser = window.audioCtx.createAnalyser();
+        window.analyser.fftSize = 256;
         
-        // SIMPLE, ROBUST CHAIN
+        // Connect the chain
         microphone.connect(window.filterNode);
         window.filterNode.connect(clarifier);
-        clarifier.connect(window.gainNode);
+        clarifier.connect(agc);
+        agc.connect(window.gainNode);
         window.gainNode.connect(limiter);
         limiter.connect(window.analyser);
         window.analyser.connect(window.audioCtx.destination);
@@ -56,20 +83,27 @@ function initProfileHandlers() {
     btns.forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // Remove active from all safely
             btns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             
             if (!window.filterNode) return;
             const p = btn.dataset.profile;
+            
             if (p === 'crowded') {
+                // Focus heavily on speech band
                 window.filterNode.type = 'bandpass';
-                window.filterNode.frequency.setTargetAtTime(1200, window.audioCtx.currentTime, 0.1);
+                window.filterNode.frequency.setTargetAtTime(1500, window.audioCtx.currentTime, 0.1);
+                window.filterNode.Q.setTargetAtTime(0.5, window.audioCtx.currentTime, 0.1);
             } else if (p === 'street') {
+                // Cut low traffic rumble strongly
                 window.filterNode.type = 'highpass';
-                window.filterNode.frequency.setTargetAtTime(2000, window.audioCtx.currentTime, 0.1);
+                window.filterNode.frequency.setTargetAtTime(600, window.audioCtx.currentTime, 0.1);
+                window.filterNode.Q.setTargetAtTime(1, window.audioCtx.currentTime, 0.1);
             } else {
-                window.filterNode.type = 'allpass';
+                // 'quiet' - Full spectrum but cut sub-bass
+                window.filterNode.type = 'highpass';
+                window.filterNode.frequency.setTargetAtTime(150, window.audioCtx.currentTime, 0.1);
+                window.filterNode.Q.setTargetAtTime(1, window.audioCtx.currentTime, 0.1);
             }
         });
     });
@@ -78,18 +112,25 @@ function initProfileHandlers() {
 powerBtn.addEventListener('click', async () => {
     if (!window.audioCtx) {
         const success = await initAudio();
-        if (!success) return;
+        if (!success) {
+            statusText.innerText = "MIC ACCESS DENIED";
+            return;
+        }
         initTranscription();
     }
     window.isEnabled = !window.isEnabled;
     if (window.isEnabled) {
         window.audioCtx.resume();
-        if (window.recognition) try { window.recognition.start(); } catch(e) {}
+        if (window.recognition) {
+            try { window.recognition.start(); } catch(e) {}
+        }
         powerBtn.classList.add('on');
         statusText.innerText = "AUDIOSENSE ACTIVE";
     } else {
         window.audioCtx.suspend();
-        if (window.recognition) window.recognition.stop();
+        if (window.recognition) {
+            try { window.recognition.stop(); } catch(e) {}
+        }
         powerBtn.classList.remove('on');
         statusText.innerText = "STANDBY";
     }
@@ -97,35 +138,64 @@ powerBtn.addEventListener('click', async () => {
 
 function initTranscription() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
+    if (!SR) {
+        if (debugConsole) debugConsole.innerText = "TRANSCRIPTION ERROR: Speech Recognition API not supported.";
+        transcriptionBox.innerHTML = `<span style="color:red">Speech Recognition not supported in this browser. Please use Chrome.</span>`;
+        return;
+    }
+    
     window.recognition = new SR();
     window.recognition.continuous = true;
     window.recognition.interimResults = true;
+    window.recognition.lang = 'en-US';
+
     window.recognition.onresult = (event) => {
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) window.finalTranscript += event.results[i][0].transcript + " ";
-            else interim = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                window.finalTranscript += event.results[i][0].transcript + " ";
+            } else {
+                interim += event.results[i][0].transcript;
+            }
         }
-        transcriptionBox.innerHTML = `<span>${window.finalTranscript + interim}</span>`;
+        // Use a slightly dimmer color for interim results to distinguish them
+        transcriptionBox.innerHTML = `<span>${window.finalTranscript}</span><span style="color: #aaa;">${interim}</span>`;
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
-    window.recognition.onend = () => { if (window.isEnabled) window.recognition.start(); };
+    
+    window.recognition.onerror = (event) => {
+        if (debugConsole) debugConsole.innerText = "TRANSCRIPTION ERROR: " + event.error;
+        if (event.error === 'not-allowed') {
+            transcriptionBox.innerHTML += `<br><span style="color:red">[Microphone access denied or protocol error. Use HTTPS or localhost.]</span>`;
+        }
+    };
+
+    window.recognition.onend = () => { 
+        if (window.isEnabled) {
+            try {
+                window.recognition.start();
+            } catch (e) {}
+        }
+    };
 }
 
 function drawVisualizer() {
     requestAnimationFrame(drawVisualizer);
-    if (!window.analyser) return;
+    if (!window.analyser || !window.isEnabled) return;
+    
     const canvas = document.getElementById('visualizer');
     if (!canvas) return;
+    
     const ctx = canvas.getContext('2d');
     const data = new Uint8Array(window.analyser.frequencyBinCount);
     window.analyser.getByteFrequencyData(data);
+    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const bw = canvas.width / 64;
-    for(let i = 0; i < 64; i++) {
-        const h = data[i] / 4;
-        ctx.fillStyle = "#00ff66";
-        ctx.fillRect(i * bw, canvas.height - h, bw - 2, h);
+    const bw = canvas.width / data.length;
+    
+    for(let i = 0; i < data.length; i++) {
+        const h = data[i] / 2; // scale height
+        ctx.fillStyle = `rgba(0, 255, 102, ${data[i] / 255})`;
+        ctx.fillRect(i * bw, canvas.height - h, bw - 1, h);
     }
 }
