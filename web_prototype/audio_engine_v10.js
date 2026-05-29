@@ -10,11 +10,7 @@ const statusText = document.getElementById('statusText');
 const transcriptionBox = document.getElementById('transcriptionBox');
 const debugConsole = document.getElementById('debugConsole');
 
-if (debugConsole) debugConsole.innerText = "UNIVERSAL ENGINE: READY (V11.0)";
-
-// ─── State for transcription robustness ───
-let _recognitionRestarting = false;
-let _restartTimer = null;
+if (debugConsole) debugConsole.innerText = "UNIVERSAL ENGINE: READY (V11.1)";
 
 async function initAudio() {
     try {
@@ -182,7 +178,12 @@ powerBtn.addEventListener('click', async () => {
     }
 });
 
-// ─── TRANSCRIPTION ENGINE (robust) ─────────────────────────────
+// ─── TRANSCRIPTION ENGINE (robust V2) ──────────────────────────
+let _recRunning = false;       // true while recognition is actually active
+let _restartTimer = null;
+let _watchdogTimer = null;
+let _lastResultTime = 0;       // timestamp of last onresult event
+
 function initTranscription() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -190,14 +191,25 @@ function initTranscription() {
         transcriptionBox.innerHTML = `<span style="color:#ff4444">Speech Recognition not supported. Please use Chrome.</span>`;
         return;
     }
+    window._SR = SR;  // store constructor for re-creation
+    _buildRecognition();
+}
 
-    window.recognition = new SR();
-    window.recognition.continuous = true;
-    window.recognition.interimResults = true;
-    window.recognition.lang = 'en-US';
-    window.recognition.maxAlternatives = 1;
+function _buildRecognition() {
+    // Create a fresh instance (avoids Chrome stale-instance bugs)
+    const rec = new window._SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 1;
 
-    window.recognition.onresult = (event) => {
+    rec.onstart = () => {
+        _recRunning = true;
+        _lastResultTime = Date.now();
+    };
+
+    rec.onresult = (event) => {
+        _lastResultTime = Date.now();
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
             const transcript = event.results[i][0].transcript;
@@ -207,63 +219,95 @@ function initTranscription() {
                 interim += transcript;
             }
         }
-
-        // Show final in white, interim (in-progress) in dim gray
+        // Final in white, interim in dim gray
         transcriptionBox.innerHTML =
             `<span>${window.finalTranscript}</span>` +
             `<span style="color:#666">${interim}</span>`;
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
 
-    window.recognition.onerror = (event) => {
-        // 'no-speech' and 'aborted' are normal — just restart silently
+    rec.onerror = (event) => {
+        _recRunning = false;
+        // 'no-speech' and 'aborted' are normal Chrome events — just restart
         if (event.error === 'no-speech' || event.error === 'aborted') {
-            scheduleRestart(300);
-            return;
+            return; // onend will fire right after this and handle restart
         }
         if (debugConsole) debugConsole.innerText = "TRANSCRIPTION ERROR: " + event.error;
         if (event.error === 'not-allowed') {
             transcriptionBox.innerHTML += `<br><span style="color:#ff4444">[Microphone denied — use HTTPS or localhost]</span>`;
-        } else if (event.error === 'network') {
-            // Network blip — retry after short delay
-            scheduleRestart(1000);
+        }
+        // For 'network' or other errors, onend will still fire and restart
+    };
+
+    rec.onend = () => {
+        _recRunning = false;
+        // Always restart if the system is supposed to be on
+        if (window.isEnabled) {
+            _scheduleRestart(250);
         }
     };
 
-    window.recognition.onend = () => {
-        // Only auto-restart if the system is supposed to be active
-        if (window.isEnabled && !_recognitionRestarting) {
-            scheduleRestart(200);
-        }
-    };
+    window.recognition = rec;
 }
 
-function scheduleRestart(delayMs) {
+function _scheduleRestart(delayMs) {
     if (_restartTimer) clearTimeout(_restartTimer);
     _restartTimer = setTimeout(() => {
-        safeStartRecognition();
+        _restartTimer = null;
+        _doStart();
     }, delayMs);
 }
 
-function safeStartRecognition() {
-    if (!window.recognition || !window.isEnabled) return;
-    _recognitionRestarting = true;
+function _doStart() {
+    if (!window.isEnabled) return;
+
+    // If somehow still running, stop first then retry
+    if (_recRunning) {
+        try { window.recognition.stop(); } catch(e) {}
+        _scheduleRestart(300);
+        return;
+    }
+
     try {
         window.recognition.start();
     } catch (e) {
-        // Already running — that's fine
+        // "Already started" or other error — nuke and rebuild
+        try { window.recognition.abort(); } catch(e2) {}
+        _buildRecognition();
+        _scheduleRestart(500);
     }
-    _recognitionRestarting = false;
+}
+
+function safeStartRecognition() {
+    if (!window.recognition) return;
+    _doStart();
+    _startWatchdog();
 }
 
 function safeStopRecognition() {
-    if (_restartTimer) clearTimeout(_restartTimer);
+    _stopWatchdog();
+    if (_restartTimer) { clearTimeout(_restartTimer); _restartTimer = null; }
     if (!window.recognition) return;
-    _recognitionRestarting = true;
-    try {
-        window.recognition.stop();
-    } catch (e) {}
-    _recognitionRestarting = false;
+    try { window.recognition.stop(); } catch(e) {}
+    _recRunning = false;
+}
+
+// ─── WATCHDOG: catches silent deaths ───────────────────────────
+// Chrome can silently kill recognition after ~60s of no speech.
+// This checks every 8 seconds and restarts if needed.
+function _startWatchdog() {
+    _stopWatchdog();
+    _watchdogTimer = setInterval(() => {
+        if (!window.isEnabled) return;
+        // If recognition isn't running and no restart is pending, kick it
+        if (!_recRunning && !_restartTimer) {
+            _doStart();
+        }
+    }, 8000);
+}
+
+function _stopWatchdog() {
+    if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
 }
 
 // ─── VISUALIZER ────────────────────────────────────────────────
