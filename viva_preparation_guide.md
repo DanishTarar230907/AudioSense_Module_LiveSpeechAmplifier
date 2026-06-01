@@ -222,6 +222,16 @@ Google Oboe is a C++ library that wraps **AAudio** (modern low-latency Android a
 > *   **INT8 Quantization:** It is the process of converting a neural network's weights and activations from 32-bit floating-point numbers (`FP32`) to 8-bit signed integers (`INT8`). This reduces the model size by **75%** (e.g. from 40MB down to 10MB) and enables hardware acceleration on mobile NPUs and DSPs.
 > *   **Representative Dataset:** Standard weights are static and easy to quantize. However, **activations** (intermediate layer outputs) vary dynamically depending on the input audio. A **Representative Dataset** provides a set of typical audio frames (e.g. 100 frames of voice + noise) to feed through the network during conversion. The compiler observes the dynamic range of activations (min/max values) and maps them to the 256 integers of the 8-bit scale (`-128` to `127`) with absolute mathematical precision."
 
+#### Q13.7: Why did you implement and include *both* Conv-TasNet and DTLN in your system instead of just choosing one?
+> **Answer:** "We implemented both architectures for three critical engineering reasons:
+> 1. **Hardware-Dependent Dynamic Fallback (NPU vs CPU):** 
+>    * *Conv-TasNet is fully Convolutional (CNN-based).* CNNs are heavily parallelized. On newer smartphones equipped with dedicated **NPUs (Neural Processing Units)** or mobile GPUs, Conv-TasNet runs incredibly fast. However, on older devices, running continuous convolutions is CPU-intensive.
+>    * *DTLN is Recurrent (LSTM-based).* LSTMs maintain a tiny sequential state. DTLN is extremely lightweight on single-core mobile **CPUs**, making it the perfect **low-power compatibility fallback** for older hardware to prevent battery drain and thermal throttling.
+> 2. **Signal-Processing Complementarity (Stationary vs Harmonic Noise):**
+>    * *Conv-TasNet* operates entirely in the raw time-domain. It is outstanding for general broadband noise isolation and isolating speech.
+>    * *DTLN* operates in a dual-domain (STFT + Learned). Because DTLN explicitly calculates frequency bins (STFT) in its first stage, it is much more effective at carving out specific **narrowband harmonic noises** (like siren wails, fan hums, or engine drones).
+> 3. **Academic Comparative Validation:** In a final year engineering thesis, you must justify your design scientifically. Implementing both models allowed us to perform a comparative benchmark (measuring SI-SDR audio gain, latency, and FLOPs) to experimentally prove the optimal boundaries of time-domain vs dual-signal domain processing."
+
 ---
 
 ### Category C: DSP & Web Audio API (Medium to Hard)
