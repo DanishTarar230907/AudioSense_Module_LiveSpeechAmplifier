@@ -246,6 +246,15 @@ Google Oboe is a C++ library that wraps **AAudio** (modern low-latency Android a
 > *   **The Rationale (MLOps Best Practice):** The Microsoft DNS Challenge dataset is massive, exceeding **150 Gigabytes (GB)** of raw `.wav` audio. Committing raw datasets of this size into a Git repository is a highly discouraged practice. It would crash Git (which has a 100MB file size limit), exhaust disk space, and slow down code operations.
 > *   **Where it sits:** The dataset is hosted on Microsoft's official open-source repository at `https://github.com/microsoft/DNS-Challenge`. During training, we download the dataset using Microsoft's specialized downloader scripts directly onto a fast local SSD drive or a cloud GPU workstation (like Google Colab or AWS EC2) situated outside the code directory. Our training scripts (`train_convtasnet.py`, `train_dtln.py`) then point to this local data mount path to stream the audio during epochs."
 
+#### Q13.97: How does a Python script 'import' or download a dataset from a URL? How does this process work?
+> **Answer:** "
+> *   **The Misconception:** People often think 'importing from a URL' means the Python code runs directly on a website. That is not how it works.
+> *   **How it actually works (Automated Downloading):**
+>     1. **The URL List:** The dataset creator (Microsoft) uploads the 150GB dataset in compressed zip blocks onto a cloud storage bucket (like **Azure Blob Storage** or **Amazon S3**) and generates permanent direct-download URLs (e.g. `https://azure.blob.core.windows.net/dns-challenge/clean_speech.zip`).
+>     2. **The Python Downloader:** We run a Python download script (using libraries like `requests`, `urllib`, or `wget`). Python acts like an invisible web browser: it sends HTTP requests to these URLs, downloads the compressed zip files to our computer's disk, and automatically extracts (unzips) them.
+>     3. **Local Stream:** Once unzipped, the files sit in a local folder on our hard drive. Our training scripts (`train_convtasnet.py`, `train_dtln.py`) then read the audio files locally from that folder.
+> *   **Alternative (Data Streaming):** In some setups (like Hugging Face `datasets`), the script doesn't save the files to disk. Instead, it streams the audio files directly from the URLs into RAM, processing them batch-by-batch during training and discarding them instantly, avoiding local storage entirely."
+
 ---
 
 ### Category C: DSP & Web Audio API (Medium to Hard)
