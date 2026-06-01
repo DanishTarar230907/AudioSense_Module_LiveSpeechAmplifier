@@ -208,6 +208,20 @@ Google Oboe is a C++ library that wraps **AAudio** (modern low-latency Android a
 #### Q13: What loss function is typically used to train Conv-TasNet?
 > **Answer:** "We use **Scale-Invariant Signal-to-Distortion Ratio (SI-SDR)** loss. Unlike standard Mean Squared Error (MSE), SI-SDR measures the ratio between the target clean signal and the reconstruction error while being completely invariant to overall scaling (volume differences). It optimizes for the physical shape and structure of the speech waveform."
 
+#### Q13.2: What is DTLN (Dual-Signal Transformation LSTM Network), and how does it compare to Conv-TasNet?
+> **Answer:** "
+> *   **What DTLN is:** DTLN is a hybrid model that processes speech in **two stacked domains (Dual-Signal Transformation)**:
+>     1. **Domain 1 (STFT Magnitude Domain):** It calculates a standard STFT magnitude spectrogram, normalizes it using **Instant Layer Normalization**, and passes it to a stack of recurrent **LSTM** layers to predict an initial frequency mask to damp background noise.
+>     2. **Domain 2 (Learned Feature Domain):** It takes the masked STFT output, converts it back to raw-like features (simulating an IFFT followed by a 1D Conv), and runs another stack of **LSTMs** to predict a second mask in this learned space.
+> *   **Comparison to Conv-TasNet:**
+>     *   *Conv-TasNet* is **fully convolutional (CNN-based)** and operates purely in the raw time-domain, completely avoiding the STFT. This makes it extremely fast with massive receptive fields due to dilation.
+>     *   *DTLN* is **recurrent (LSTM-based)** and blends classical STFT magnitude analysis with deep-learned time-domain features. It represents a 'best of both worlds' approach, giving highly stable noise gating but requiring stateful management of LSTM cells during streaming."
+
+#### Q13.5: What is INT8 Quantization, and why is a "Representative Dataset" required during conversion in export_tflite.py?
+> **Answer:** "
+> *   **INT8 Quantization:** It is the process of converting a neural network's weights and activations from 32-bit floating-point numbers (`FP32`) to 8-bit signed integers (`INT8`). This reduces the model size by **75%** (e.g. from 40MB down to 10MB) and enables hardware acceleration on mobile NPUs and DSPs.
+> *   **Representative Dataset:** Standard weights are static and easy to quantize. However, **activations** (intermediate layer outputs) vary dynamically depending on the input audio. A **Representative Dataset** provides a set of typical audio frames (e.g. 100 frames of voice + noise) to feed through the network during conversion. The compiler observes the dynamic range of activations (min/max values) and maps them to the 256 integers of the 8-bit scale (`-128` to `127`) with absolute mathematical precision."
+
 ---
 
 ### Category C: DSP & Web Audio API (Medium to Hard)
