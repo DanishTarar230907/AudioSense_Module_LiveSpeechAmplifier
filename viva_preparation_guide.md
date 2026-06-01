@@ -241,6 +241,11 @@ Google Oboe is a C++ library that wraps **AAudio** (modern low-latency Android a
 >     3. **Room Impulse Responses (RIRs):** Over 100,000 synthetic and real room impulse responses.
 > *   **Training Synthesis Loop:** During model training, our scripts programmatically mixed clean speech and noise at varying **Signal-to-Noise Ratios (SNR)** ranging from `-5dB` (very noisy) to `+20dB` (mild noise), and convolved them with the Room Impulse Responses (RIRs) to simulate realistic physical echo and reverberation. This forced the AI to learn how to isolate human vocals in extremely chaotic, real-world acoustics."
 
+#### Q13.95: Is the raw dataset included in your GitHub repository? If not, where is it, and how is it accessed?
+> **Answer:** "No, the raw training dataset is **not** checked into our Git repository.
+> *   **The Rationale (MLOps Best Practice):** The Microsoft DNS Challenge dataset is massive, exceeding **150 Gigabytes (GB)** of raw `.wav` audio. Committing raw datasets of this size into a Git repository is a highly discouraged practice. It would crash Git (which has a 100MB file size limit), exhaust disk space, and slow down code operations.
+> *   **Where it sits:** The dataset is hosted on Microsoft's official open-source repository at `https://github.com/microsoft/DNS-Challenge`. During training, we download the dataset using Microsoft's specialized downloader scripts directly onto a fast local SSD drive or a cloud GPU workstation (like Google Colab or AWS EC2) situated outside the code directory. Our training scripts (`train_convtasnet.py`, `train_dtln.py`) then point to this local data mount path to stream the audio during epochs."
+
 ---
 
 ### Category C: DSP & Web Audio API (Medium to Hard)
