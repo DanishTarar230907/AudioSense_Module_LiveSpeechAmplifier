@@ -232,6 +232,15 @@ Google Oboe is a C++ library that wraps **AAudio** (modern low-latency Android a
 >    * *DTLN* operates in a dual-domain (STFT + Learned). Because DTLN explicitly calculates frequency bins (STFT) in its first stage, it is much more effective at carving out specific **narrowband harmonic noises** (like siren wails, fan hums, or engine drones).
 > 3. **Academic Comparative Validation:** In a final year engineering thesis, you must justify your design scientifically. Implementing both models allowed us to perform a comparative benchmark (measuring SI-SDR audio gain, latency, and FLOPs) to experimentally prove the optimal boundaries of time-domain vs dual-signal domain processing."
 
+#### Q13.9: What dataset did you use to train these deep learning speech isolation models (Conv-TasNet & DTLN)?
+> **Answer:** "We trained both of our deep learning models on the **Microsoft Deep Noise Suppression (DNS) Challenge Dataset** (specifically, the INTERSPEECH DNS Challenge edition). 
+> *   **Why this dataset:** It is the premier, internationally recognized benchmark dataset created specifically for training and evaluating real-time, low-latency speech enhancement models on edge hardware.
+> *   **Dataset Components:**
+>     1. **Clean Speech:** Over 500 hours of high-fidelity clean speech recorded in over 10+ languages (representing diverse accents, genders, and age groups).
+>     2. **Noise Corpus:** Over 150 hours of pure noise recordings across 150+ distinct ambient noise types (e.g. street rumble, keyboard typing, crowd babble, wind, sirens, and office noise).
+>     3. **Room Impulse Responses (RIRs):** Over 100,000 synthetic and real room impulse responses.
+> *   **Training Synthesis Loop:** During model training, our scripts programmatically mixed clean speech and noise at varying **Signal-to-Noise Ratios (SNR)** ranging from `-5dB` (very noisy) to `+20dB` (mild noise), and convolved them with the Room Impulse Responses (RIRs) to simulate realistic physical echo and reverberation. This forced the AI to learn how to isolate human vocals in extremely chaotic, real-world acoustics."
+
 ---
 
 ### Category C: DSP & Web Audio API (Medium to Hard)
