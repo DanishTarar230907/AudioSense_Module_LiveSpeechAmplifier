@@ -145,19 +145,38 @@ function initTranscription() {
         transcriptionBox.scrollTop = transcriptionBox.scrollHeight;
     };
 
+    let _restartDelay = 250;
+
+    recognition.onstart = () => {
+        _restartDelay = 250; // Reset delay on successful start
+    };
+
     recognition.onend = () => { 
         if (isEnabled) {
             if (shadowTranscript) {
                 finalTranscript += shadowTranscript + " ";
                 shadowTranscript = "";
             }
-            recognition.start(); 
+            setTimeout(() => {
+                if (isEnabled) {
+                    try { recognition.start(); } catch(err) {}
+                }
+            }, _restartDelay); 
         }
     };
     
     recognition.onerror = (e) => {
-        if (e.error !== 'no-speech' && isEnabled) {
-            setTimeout(() => recognition.start(), 100);
+        if (e.error === 'no-speech' || e.error === 'aborted') {
+            return;
+        }
+
+        if (e.error === 'network') {
+            _restartDelay = Math.min(_restartDelay * 2, 8000);
+            transcriptionBox.innerHTML = `<span style="color:#ffa500">[Transcription Network Error. Ensure you have active internet. If using Brave/Edge, use official Google Chrome (non-Chrome browsers block this private Google API).]</span>`;
+        }
+
+        if (e.error === 'not-allowed') {
+            transcriptionBox.innerHTML = `<span style="color:#ff4444">[Microphone denied — use HTTPS or localhost]</span>`;
         }
     };
 }

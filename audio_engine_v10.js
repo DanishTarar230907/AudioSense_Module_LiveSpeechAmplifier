@@ -203,9 +203,12 @@ function _buildRecognition() {
     rec.lang = 'en-US';
     rec.maxAlternatives = 1;
 
+    let _restartDelay = 250;
+
     rec.onstart = () => {
         _recRunning = true;
         _lastResultTime = Date.now();
+        _restartDelay = 250; // Reset delay on successful start
     };
 
     rec.onresult = (event) => {
@@ -230,20 +233,30 @@ function _buildRecognition() {
         _recRunning = false;
         // 'no-speech' and 'aborted' are normal Chrome events — just restart
         if (event.error === 'no-speech' || event.error === 'aborted') {
-            return; // onend will fire right after this and handle restart
+            return; // onend will handle restart
         }
-        if (debugConsole) debugConsole.innerText = "TRANSCRIPTION ERROR: " + event.error;
+        
+        if (event.error === 'network') {
+            // Apply exponential backoff (multiply by 2, cap at 8 seconds) to prevent API spamming
+            _restartDelay = Math.min(_restartDelay * 2, 8000);
+            if (debugConsole) {
+                debugConsole.innerText = "TRANSCRIPTION: Network error. Retrying in " + (_restartDelay / 1000) + "s...";
+            }
+            transcriptionBox.innerHTML = `<span style="color:#ffa500">[Transcription Network Error. Ensure you have active internet. If using Brave/Edge, use official Google Chrome (non-Chrome browsers block this private Google API).]</span>`;
+        } else {
+            if (debugConsole) debugConsole.innerText = "TRANSCRIPTION ERROR: " + event.error;
+        }
+
         if (event.error === 'not-allowed') {
-            transcriptionBox.innerHTML += `<br><span style="color:#ff4444">[Microphone denied — use HTTPS or localhost]</span>`;
+            transcriptionBox.innerHTML = `<span style="color:#ff4444">[Microphone denied — use HTTPS or localhost]</span>`;
         }
-        // For 'network' or other errors, onend will still fire and restart
     };
 
     rec.onend = () => {
         _recRunning = false;
         // Always restart if the system is supposed to be on
         if (window.isEnabled) {
-            _scheduleRestart(250);
+            _scheduleRestart(_restartDelay);
         }
     };
 
